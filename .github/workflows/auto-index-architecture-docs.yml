@@ -17,7 +17,6 @@ jobs:
     
     permissions:
       contents: write
-      pull-requests: read
     
     steps:
     - name: Checkout repository
@@ -112,22 +111,9 @@ jobs:
             try {
               fs.renameSync(rename.from, rename.to);
               renamed.push(rename);
-              console.log(`Renamed: ${rename.from} → ${rename.to}`);
             } catch (error) {
               console.error(`Failed to rename ${rename.from}:`, error.message);
             }
-          }
-          
-          if (renamed.length > 0) {
-            // Create a summary of changes
-            const summary = renamed.map(r => `- ${r.index}: ${path.basename(r.to)}`).join('\n');
-            
-            // Write summary to a file that can be used in commit message
-            fs.writeFileSync('rename-summary.txt', 
-              `Auto-indexed ${renamed.length} architecture document(s):\n\n${summary}`
-            );
-            
-            console.log(`Successfully renamed ${renamed.length} files`);
           }
         }
         
@@ -149,38 +135,13 @@ jobs:
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
         
-        # Read the summary if it exists
-        if [ -f "rename-summary.txt" ]; then
-          COMMIT_MSG=$(cat rename-summary.txt)
-        else
-          COMMIT_MSG="Auto-index architecture documents"
-        fi
+        # Only add the docs directory and exclude npm/node files
+        git add docs/
+        # Add any other architecture directories if you have them
+        # git add architecture/
         
-        git add .
-        git commit -m "$COMMIT_MSG"
+        # Make sure we don't accidentally commit npm files
+        git reset HEAD package*.json node_modules/ 2>/dev/null || true
+        
+        git commit -m "Auto-index architecture documents"
         git push
-        
-        # Clean up
-        rm -f rename-summary.txt
-    
-    - name: Create comment on PR
-      if: steps.check_changes.outputs.has_changes == 'true'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          let comment = '🔄 **Architecture Documents Auto-Indexed**\n\n';
-          
-          if (fs.existsSync('rename-summary.txt')) {
-            const summary = fs.readFileSync('rename-summary.txt', 'utf8');
-            comment += summary;
-          } else {
-            comment += 'Architecture documents have been automatically indexed.';
-          }
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: comment
-          });
