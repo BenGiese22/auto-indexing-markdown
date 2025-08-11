@@ -1,0 +1,3 @@
+Auto-indexed 1 architecture document(s):
+
+- 0002: 0002-analytical-events-architecture.md
