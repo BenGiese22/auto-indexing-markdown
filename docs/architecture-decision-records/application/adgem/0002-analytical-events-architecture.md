@@ -1,186 +1,153 @@
-# .github/workflows/auto-index-architecture-docs.yml
+# 0002: Analytical Events Architecture
 
-name: Auto-Index Architecture Documents
+## STATUS
 
-on:
-  pull_request:
-    types: [closed]
-    branches: [main]  # Adjust to your default branch
-    paths: 
-      - 'docs/**'  # Adjust path to your architecture docs folder
-      - 'architecture/**'  # Add other paths as needed
+    Accepted
 
-jobs:
-  auto-index-docs:
-    if: github.event.pull_request.merged == true
-    runs-on: ubuntu-latest
-    
-    permissions:
-      contents: write
-      pull-requests: read
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        token: ${{ secrets.GITHUB_TOKEN }}
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-    
-    - name: Install dependencies
-      run: |
-        npm init -y
-        npm install glob
-    
-    - name: Auto-index architecture documents
-      run: |
-        node << 'EOF'
-        const fs = require('fs');
-        const path = require('path');
-        const { glob } = require('glob');
-        
-        // Configuration - adjust these paths for your repository
-        const DOCS_DIR = 'docs'; // Change to your architecture docs directory
-        const FILE_PATTERNS = ['*.md', '*.adoc', '*.txt']; // Supported file types
-        
-        async function autoIndexDocuments() {
-          console.log('Starting auto-indexing process...');
-          
-          // Find all architecture documents
-          const patterns = FILE_PATTERNS.map(pattern => `${DOCS_DIR}/**/${pattern}`);
-          let allFiles = [];
-          
-          for (const pattern of patterns) {
-            const files = await glob(pattern);
-            allFiles = allFiles.concat(files);
-          }
-          
-          // Filter out files that already have index numbers (0001-9999)
-          const indexedFiles = allFiles.filter(file => {
-            const basename = path.basename(file);
-            return /^\d{4}-/.test(basename);
-          });
-          
-          const unindexedFiles = allFiles.filter(file => {
-            const basename = path.basename(file);
-            return !/^\d{4}-/.test(basename);
-          });
-          
-          if (unindexedFiles.length === 0) {
-            console.log('No unindexed files found. Nothing to do.');
-            return;
-          }
-          
-          // Find the highest existing index
-          let maxIndex = 0;
-          indexedFiles.forEach(file => {
-            const basename = path.basename(file);
-            const match = basename.match(/^(\d{4})-/);
-            if (match) {
-              const index = parseInt(match[1], 10);
-              if (index > maxIndex) {
-                maxIndex = index;
-              }
-            }
-          });
-          
-          console.log(`Found ${indexedFiles.length} indexed files, highest index: ${maxIndex.toString().padStart(4, '0')}`);
-          console.log(`Found ${unindexedFiles.length} unindexed files to process`);
-          
-          // Sort unindexed files for consistent ordering
-          unindexedFiles.sort();
-          
-          // Rename unindexed files with sequential numbering
-          const renames = [];
-          unindexedFiles.forEach((file, i) => {
-            const newIndex = (maxIndex + i + 1).toString().padStart(4, '0');
-            const dir = path.dirname(file);
-            const basename = path.basename(file);
-            const newFilename = `${newIndex}-${basename}`;
-            const newPath = path.join(dir, newFilename);
-            
-            renames.push({ from: file, to: newPath, index: newIndex });
-          });
-          
-          // Perform the renames
-          let renamed = [];
-          for (const rename of renames) {
-            try {
-              fs.renameSync(rename.from, rename.to);
-              renamed.push(rename);
-              console.log(`Renamed: ${rename.from} → ${rename.to}`);
-            } catch (error) {
-              console.error(`Failed to rename ${rename.from}:`, error.message);
-            }
-          }
-          
-          if (renamed.length > 0) {
-            // Create a summary of changes
-            const summary = renamed.map(r => `- ${r.index}: ${path.basename(r.to)}`).join('\n');
-            
-            // Write summary to a file that can be used in commit message
-            fs.writeFileSync('rename-summary.txt', 
-              `Auto-indexed ${renamed.length} architecture document(s):\n\n${summary}`
-            );
-            
-            console.log(`Successfully renamed ${renamed.length} files`);
-          }
-        }
-        
-        autoIndexDocuments().catch(console.error);
-        EOF
-    
-    - name: Check for changes
-      id: check_changes
-      run: |
-        if git diff --quiet; then
-          echo "has_changes=false" >> $GITHUB_OUTPUT
-        else
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-        fi
-    
-    - name: Commit and push changes
-      if: steps.check_changes.outputs.has_changes == 'true'
-      run: |
-        git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
-        
-        # Read the summary if it exists
-        if [ -f "rename-summary.txt" ]; then
-          COMMIT_MSG=$(cat rename-summary.txt)
-        else
-          COMMIT_MSG="Auto-index architecture documents"
-        fi
-        
-        git add .
-        git commit -m "$COMMIT_MSG"
-        git push
-        
-        # Clean up
-        rm -f rename-summary.txt
-    
-    - name: Create comment on PR
-      if: steps.check_changes.outputs.has_changes == 'true'
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          let comment = '🔄 **Architecture Documents Auto-Indexed**\n\n';
-          
-          if (fs.existsSync('rename-summary.txt')) {
-            const summary = fs.readFileSync('rename-summary.txt', 'utf8');
-            comment += summary;
-          } else {
-            comment += 'Architecture documents have been automatically indexed.';
-          }
-          
-          github.rest.issues.createComment({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            body: comment
-          });
+## CONTEXT
+
+Event tracking in the AdGem system is implemented in several
+inconvenient ways.  There are at least 3 methods of making calls to
+save events, and there are several different tables and firehoses to
+store the data, with a wide, sparsely populated structure.
+Additionally, AdAction has built a new data warehouse, and these
+events remain in a legacy AdGem specific warehouse.
+
+We need an easy to use method to store events in the new warehouse.
+
+### Considered Options
+
+ * Write to a firehose that dumps to a data engineering S3 bucket
+   to be loaded into the raw data warehouse and then transformed
+   for analysis via Airflow and dbt. - DECISION
+ * Write to a firehose that dumps to a data engineering S3 bucket
+   to be loaded into the data warehouse via a lambda.
+
+## DECISION
+
+The data will be published to a firehose in the AdGem account.  This
+firehose is configured to dump to an S3 bucket in the
+`data-engineering-prod` account.  From there, it is loaded via
+**Airflow** into the `events_raw` table in the `adgem_raw` database on
+the modern data-warehouse.  Airflow then uses DBT to transform the
+data into a format ready for analysis in the `events` table in
+`adgem_analysis`.
+
+### Data Flow
+```mermaid
+flowchart TB
+subgraph adgemacount [AdGem Acct]
+  php1[AdGem PHP Server]--writes-->fh1([Firehose])
+end
+fh1--writes-->s3
+subgraph dataeng [Data Engineering Acct]
+  s3[(S3 Bucket)]
+  airflow[Airflow]
+end
+airflow--writes-->redshift
+airflow--reads-->s3
+subgraph warehouse [Data Warehouse Acct]
+  redshift[(Redshift)]
+end
+```
+
+Data is initially ingested in a "raw" format with all fields being
+basic varchars. DBT is then used to transform the data into typed
+columns for analysis.  The advantage here is it minimalized the risk
+of data being lost due to bad formats or types.
+
+```mermaid
+flowchart LR
+subgraph rs[Redshift]
+agraw[(adgem_raw)]
+aganalysis[(adgem_analysis)]
+end
+agraw--reads-->dbt--writes-->aganalysis
+subgraph af[Airflow]
+dbt
+end
+```
+
+Attributes common to (nearly) all event types will be stored in
+columns on the event record table.  Data unique to specific event
+types will be stored in a *SUPER* json column within Redshift. This
+will allow for easy querying of the data without having to create new
+columns for each new event type.
+
+### Data schema
+```mermaid
+erDiagram
+EVENT {
+    event varchar(100)
+    click_id varchar(100)
+    app_id int4
+    adgem_uid varchar(65535)
+    platform varchar(100)
+    os_version varchar(100)
+    device varchar(100)
+    device_name varchar(256)
+    campaign_id int4
+    ip varchar(100)
+    isp varchar(500)
+    connection_type varchar(500)
+    country varchar(3)
+    state varchar(100)
+    city varchar(100)
+    postal_code varchar(50)
+    lat float8
+    lon float8
+    useragent varchar(8000)
+    sdk_version varchar(100)
+    sdk_type varchar(100)
+    publisher_id int4
+    idfa varchar(100)
+    gaid varchar(100)
+    player_id varchar(256)
+    timezone varchar(100)
+    carrier_name varchar(256)
+    request_url varchar(65535)
+    sub_site_id varchar(100)
+    integration_type varchar(20)
+    environment varchar(20)
+    service varchar(20)
+    created_at TIMESTAMP
+    extra_info SUPER
+    feature_flags SUPER
+}
+```
+
+### Other options
+Although there is a reference implementation of using a lambda for the
+data loading available with `service_hub`, all new data efforts are
+using the Airflow/dbt stack. As such we've decided to build with
+Airflow.
+
+## CONSEQUENCES
+
+All raw production data will be captured and preserved in the
+`events_raw` table. There will only be debug logging of the events
+in development, staging, and CI environments.
+
+It will be simpler to have a single schema from a maintenance
+perspective. We will not need to generate new firehoses and tables for
+each new type of event created. Querying the data could be simpler or
+more complicated depending on the use case.
+
+### Risks
+
+With no local database for development of these events there won't be
+a true test of the flow until staging or unless the developer connects
+to the production stream.
+
+## NOTES
+
+### References
+
+### Original Author
+ - Ron White
+
+### Approval date
+
+### Approved by
+
+## Appendix
