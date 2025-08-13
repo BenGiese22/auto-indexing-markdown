@@ -33,92 +33,13 @@ jobs:
     - name: Install dependencies
       run: |
         npm init -y
-        npm install glob
+        npm install glob typescript ts-node @types/node
     
     - name: Auto-index architecture documents
+      env:
+        DOCS_DIR: 'docs'  # Configure your docs directory here
       run: |
-        node << 'EOF'
-        const fs = require('fs');
-        const path = require('path');
-        const { glob } = require('glob');
-        
-        // Configuration - adjust these paths for your repository
-        const DOCS_DIR = 'docs'; // Change to your architecture docs directory
-        const FILE_PATTERNS = ['*.md', '*.adoc', '*.txt']; // Supported file types
-        
-        async function autoIndexDocuments() {
-          console.log('Starting auto-indexing process...');
-          
-          // Find all architecture documents
-          const patterns = FILE_PATTERNS.map(pattern => `${DOCS_DIR}/**/${pattern}`);
-          let allFiles = [];
-          
-          for (const pattern of patterns) {
-            const files = await glob(pattern);
-            allFiles = allFiles.concat(files);
-          }
-          
-          // Filter out files that already have index numbers (0001-9999)
-          const indexedFiles = allFiles.filter(file => {
-            const basename = path.basename(file);
-            return /^\d{4}-/.test(basename);
-          });
-          
-          const unindexedFiles = allFiles.filter(file => {
-            const basename = path.basename(file);
-            return !/^\d{4}-/.test(basename);
-          });
-          
-          if (unindexedFiles.length === 0) {
-            console.log('No unindexed files found. Nothing to do.');
-            return;
-          }
-          
-          // Find the highest existing index
-          let maxIndex = 0;
-          indexedFiles.forEach(file => {
-            const basename = path.basename(file);
-            const match = basename.match(/^(\d{4})-/);
-            if (match) {
-              const index = parseInt(match[1], 10);
-              if (index > maxIndex) {
-                maxIndex = index;
-              }
-            }
-          });
-          
-          console.log(`Found ${indexedFiles.length} indexed files, highest index: ${maxIndex.toString().padStart(4, '0')}`);
-          console.log(`Found ${unindexedFiles.length} unindexed files to process`);
-          
-          // Sort unindexed files for consistent ordering
-          unindexedFiles.sort();
-          
-          // Rename unindexed files with sequential numbering
-          const renames = [];
-          unindexedFiles.forEach((file, i) => {
-            const newIndex = (maxIndex + i + 1).toString().padStart(4, '0');
-            const dir = path.dirname(file);
-            const basename = path.basename(file);
-            const newFilename = `${newIndex}-${basename}`;
-            const newPath = path.join(dir, newFilename);
-            
-            renames.push({ from: file, to: newPath, index: newIndex });
-          });
-          
-          // Perform the renames
-          let renamed = [];
-          for (const rename of renames) {
-            try {
-              fs.renameSync(rename.from, rename.to);
-              renamed.push(rename);
-            } catch (error) {
-              console.error(`Failed to rename ${rename.from}:`, error.message);
-            }
-          }
-        }
-        
-        autoIndexDocuments().catch(console.error);
-        EOF
+        npx ts-node .github/scripts/auto-index-docs.ts
     
     - name: Check for changes
       id: check_changes
