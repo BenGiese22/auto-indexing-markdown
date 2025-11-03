@@ -1,4 +1,4 @@
-# [Number]: Handling Capping in Adgem
+# 0004: Handling Capping in Adgem
 
 ## STATUS
     Accepted
