@@ -93,16 +93,27 @@ jobs:
               const isException = exceptionMatchers.some(exception => statusKeyword === exception);
               const isAlreadyDefault = statusKeyword === STATUS_DEFAULT.toLowerCase();
 
-              if (!isException && !isAlreadyDefault) {
-                if (statusLineIndex !== null) {
-                  // Multi-line status: rewrite the value line while preserving indentation.
-                  const statusLeadingWhitespace = lines[statusLineIndex].match(/^\s*/)[0];
-                  lines[statusLineIndex] = `${statusLeadingWhitespace}${STATUS_DEFAULT}`;
-                } else {
-                  // Inline status: rewrite the heading with the default value.
-                  lines[i] = `${leadingWhitespace}## STATUS: ${STATUS_DEFAULT}`;
+              const targetStatus = (!isException && !isAlreadyDefault)
+                ? STATUS_DEFAULT
+                : normalizedStatus;
+
+              if (statusLineIndex !== null) {
+                // Multi-line status: rewrite the value line while preserving indentation.
+                const statusLeadingWhitespace = lines[statusLineIndex].match(/^\s*/)[0];
+                const newStatusLine = `${statusLeadingWhitespace}${targetStatus}`;
+
+                if (lines[statusLineIndex] !== newStatusLine) {
+                  lines[statusLineIndex] = newStatusLine;
+                  updated = true;
                 }
-                updated = true;
+              } else {
+                // Inline status: normalize heading format while preserving exceptions when present.
+                const newHeading = `${leadingWhitespace}## STATUS: ${targetStatus}`;
+
+                if (lines[i] !== newHeading) {
+                  lines[i] = newHeading;
+                  updated = true;
+                }
               }
 
               break;
