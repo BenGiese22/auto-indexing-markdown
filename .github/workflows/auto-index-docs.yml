@@ -1,0 +1,235 @@
+# .github/workflows/auto-index-architecture-docs.yml
+
+name: Auto-Index Architecture Documents
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]  # Adjust to your default branch
+    paths: 
+      - 'docs/architecture-decision-records/**'  # Only trigger on changes to architecture decision records
+
+jobs:
+  auto-index-docs:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.CICD_TOKEN }}  # Use adaction-cicd user PAT
+    
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+    
+    - name: Install dependencies
+      run: |
+        npm init -y
+        npm install glob
+    
+    - name: Auto-index architecture documents
+      run: |
+        node << 'EOF'
+        const fs = require('fs');
+        const path = require('path');
+        const { glob } = require('glob');
+        
+        // Configuration - adjust these paths for your repository
+        const DOCS_DIR = 'docs/architecture-decision-records'; // Only index files in this directory
+        const FILE_PATTERNS = ['*.md', '*.adoc', '*.txt']; // Supported file types
+        
+        // Default status for ADRs unless an exception applies.
+        const STATUS_DEFAULT = 'Accepted';
+        const STATUS_EXCEPTIONS = ['Deferred', 'Declined', 'Superseded'];
+
+        function enforceStatus(content) {
+          // Work line-by-line so we can rewrite either inline or multi-line status blocks.
+          const lines = content.split(/\r?\n/);
+          let updated = false;
+          const exceptionMatchers = STATUS_EXCEPTIONS.map(exception => exception.toLowerCase());
+
+          for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            // Catch headings like "## STATUS", "## Status: Draft", or "## STATUS - Draft".
+            const headingMatch = line.match(/^(\s*##\s+status)(?:\s*[:\-]\s*(.*))?$/i);
+
+            if (headingMatch) {
+              const leadingWhitespace = line.match(/^\s*/)[0];
+              const inlineStatusRaw = headingMatch[2] ? headingMatch[2].trim() : null;
+              let currentStatus = inlineStatusRaw;
+              let statusLineIndex = null;
+
+              if (!currentStatus) {
+                // Walk forward to find the first non-empty line immediately after the heading.
+                let probeIndex = i + 1;
+                while (probeIndex < lines.length && lines[probeIndex].trim() === '') {
+                  probeIndex++;
+                }
+
+                if (probeIndex >= lines.length) {
+                  break;
+                }
+
+                statusLineIndex = probeIndex;
+                currentStatus = lines[probeIndex].trim();
+              }
+
+              if (!currentStatus) {
+                break;
+              }
+
+              // Normalize for comparisons while preserving Markdown formatting when we write back.
+              const normalizedStatus = currentStatus.replace(/^\[(.*)\]$/, '$1').trim();
+              const cleanedForComparison = normalizedStatus.replace(/[*_`]/g, '').trim();
+              const statusKeywordMatch = cleanedForComparison.match(/^[a-z]+/i);
+              const statusKeyword = statusKeywordMatch ? statusKeywordMatch[0].toLowerCase() : '';
+              const isException = exceptionMatchers.some(exception => statusKeyword === exception);
+              const isAlreadyDefault = statusKeyword === STATUS_DEFAULT.toLowerCase();
+
+              if (!isException && !isAlreadyDefault) {
+                if (statusLineIndex !== null) {
+                  // Multi-line status: rewrite the value line while preserving indentation.
+                  const statusLeadingWhitespace = lines[statusLineIndex].match(/^\s*/)[0];
+                  lines[statusLineIndex] = `${statusLeadingWhitespace}${STATUS_DEFAULT}`;
+                } else {
+                  // Inline status: rewrite the heading with the default value.
+                  lines[i] = `${leadingWhitespace}## STATUS: ${STATUS_DEFAULT}`;
+                }
+                updated = true;
+              }
+
+              break;
+            }
+          }
+
+          return { content: lines.join('\n'), updated };
+        }
+
+        async function autoIndexDocuments() {
+          console.log('Starting auto-indexing process...');
+          
+          // Find all architecture documents
+          const patterns = FILE_PATTERNS.map(pattern => `${DOCS_DIR}/**/${pattern}`);
+          let allFiles = [];
+          
+          for (const pattern of patterns) {
+            const files = await glob(pattern);
+            allFiles = allFiles.concat(files);
+          }
+          
+          // Filter out files that already have index numbers (0001-9999)
+          const indexedFiles = allFiles.filter(file => {
+            const basename = path.basename(file);
+            return /^\d{4}-/.test(basename);
+          });
+          
+          const unindexedFiles = allFiles.filter(file => {
+            const basename = path.basename(file);
+            return !/^\d{4}-/.test(basename);
+          });
+          
+          if (unindexedFiles.length === 0) {
+            console.log('No unindexed files found. Nothing to do.');
+            return;
+          }
+          
+          // Find the highest existing index
+          let maxIndex = 0;
+          indexedFiles.forEach(file => {
+            const basename = path.basename(file);
+            const match = basename.match(/^(\d{4})-/);
+            if (match) {
+              const index = parseInt(match[1], 10);
+              if (index > maxIndex) {
+                maxIndex = index;
+              }
+            }
+          });
+          
+          console.log(`Found ${indexedFiles.length} indexed files, highest index: ${maxIndex.toString().padStart(4, '0')}`);
+          console.log(`Found ${unindexedFiles.length} unindexed files to process`);
+          
+          // Sort unindexed files for consistent ordering
+          unindexedFiles.sort();
+          
+          // Rename unindexed files with sequential numbering
+          const renames = [];
+          unindexedFiles.forEach((file, i) => {
+            const newIndex = (maxIndex + i + 1).toString().padStart(4, '0');
+            const dir = path.dirname(file);
+            const basename = path.basename(file);
+            const newFilename = `${newIndex}-${basename}`;
+            const newPath = path.join(dir, newFilename);
+            
+            renames.push({ from: file, to: newPath, index: newIndex });
+          });
+          
+          // Perform the renames
+          let renamed = [];
+          for (const rename of renames) {
+            try {
+              fs.renameSync(rename.from, rename.to);
+              renamed.push(rename);
+              console.log(`Renamed: ${rename.from} → ${rename.to}`);
+              
+              // Update the content of the file to replace any number sequence with the correct index
+              try {
+                const originalContent = fs.readFileSync(rename.to, 'utf8');
+                // Match various number patterns: [Number], [0001], 0001, 99, etc.
+                let updatedContent = originalContent.replace(/^# (?:\[(?:Number|\d+)\]|\d+): (.*)$/m, `# ${rename.index}: $1`);
+                let contentChanged = updatedContent !== originalContent;
+
+                const statusResult = enforceStatus(updatedContent);
+                updatedContent = statusResult.content;
+                contentChanged = contentChanged || statusResult.updated;
+                
+                if (contentChanged) {
+                  fs.writeFileSync(rename.to, updatedContent, 'utf8');
+                  if (updatedContent !== originalContent) {
+                    console.log(`Updated header and/or status in: ${rename.to}`);
+                  }
+                }
+              } catch (contentError) {
+                console.error(`Failed to update content in ${rename.to}:`, contentError.message);
+              }
+            } catch (error) {
+              console.error(`Failed to rename ${rename.from}:`, error.message);
+            }
+          }
+          
+          if (renamed.length > 0) {
+            console.log(`Successfully renamed ${renamed.length} files`);
+          }
+        }
+        
+        autoIndexDocuments().catch(console.error);
+        EOF
+    
+    - name: Check for changes
+      id: check_changes
+      run: |
+        if git diff --quiet; then
+          echo "has_changes=false" >> $GITHUB_OUTPUT
+        else
+          echo "has_changes=true" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Commit and push changes
+      if: steps.check_changes.outputs.has_changes == 'true'
+      run: |
+        git config --local user.email "${{ secrets.CICD_EMAIL }}"
+        git config --local user.name "Auto-Index Bot via adaction-cicd user"
+
+        # Only add the architecture decision records directory
+        git add docs/architecture-decision-records/
+        # Make sure we don't accidentally commit npm files
+        git reset HEAD package*.json node_modules/ 2>/dev/null || true
+        git commit -m "Auto-index architecture decision records"
+        git push
