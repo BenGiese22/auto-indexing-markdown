@@ -1,10 +1,10 @@
-# [Number]: Hyphen Draft Status ADR
+# 0008: Hyphen Draft Status ADR
 
 {
     Update [Title] but leave [Number] untouched as the auto-index-docs workflow will update it for you!
 }
 
-## Status - Draft
+## STATUS: Accepted
 
 ## CONTEXT
 
