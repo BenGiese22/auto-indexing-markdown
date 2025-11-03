@@ -22,7 +22,7 @@ jobs:
       uses: actions/checkout@v4
       with:
         fetch-depth: 0
-        token: ${{ secrets.CICD_TOKEN }}  # Use adaction-cicd user PAT
+        token: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Setup Node.js
       uses: actions/setup-node@v4
@@ -224,8 +224,8 @@ jobs:
     - name: Commit and push changes
       if: steps.check_changes.outputs.has_changes == 'true'
       run: |
-        git config --local user.email "${{ secrets.CICD_EMAIL }}"
-        git config --local user.name "Auto-Index Bot via adaction-cicd user"
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
 
         # Only add the architecture decision records directory
         git add docs/architecture-decision-records/
