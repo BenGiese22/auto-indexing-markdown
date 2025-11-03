@@ -1,11 +1,10 @@
-# 0005: Multiline Status ADR
+# [Number]: Hyphenated Status ADR
 
 {
     Update [Title] but leave [Number] untouched as the auto-index-docs workflow will update it for you!
 }
 
-## STATUS
-    Request for Comments
+## Status - Superseded
 
 ## CONTEXT
 

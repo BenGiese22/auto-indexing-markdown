@@ -1,10 +1,10 @@
-# 0006: Hyphenated Status ADR
+# [Number]: Inline Status ADR
 
 {
     Update [Title] but leave [Number] untouched as the auto-index-docs workflow will update it for you!
 }
 
-## Status - Superseded
+## STATUS: Draft
 
 ## CONTEXT
 

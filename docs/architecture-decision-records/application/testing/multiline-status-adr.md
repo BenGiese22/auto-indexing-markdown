@@ -1,10 +1,11 @@
-# 0004: Inline Status ADR
+# [Number]: Multiline Status ADR
 
 {
     Update [Title] but leave [Number] untouched as the auto-index-docs workflow will update it for you!
 }
 
-## STATUS: Draft
+## STATUS
+    Request for Comments
 
 ## CONTEXT
 
